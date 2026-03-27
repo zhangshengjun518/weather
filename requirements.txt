@@ -1,3 +1,4 @@
 requests
 beautifulsoup4
 lxml
+streamlit # 如果 Streamlit 应用本身也要在 Colab 环境下运行调试，则也需要这个。
