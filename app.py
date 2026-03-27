@@ -1,6 +1,51 @@
+import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 
+# --- Streamlit 页面配置 ---
+st.set_page_config(
+    page_title="北京各城区天气预报 & 穿衣建议",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# 自定义CSS实现蓝色背景
+st.markdown("""
+<style>
+.stApp {
+    background-color: #e0f2f7; /* 浅蓝色背景 */
+}
+.main-header {
+    font-size: 3em;
+    font-weight: bold;
+    color: #2c3e50; /* 深蓝色 */
+    text-align: center;
+    margin-bottom: 20px;
+}
+.district-card {
+    background-color: #ffffff;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+.character-name {
+    font-size: 1.5em;
+    font-weight: bold;
+    color: #e67e22; /* 橙色 */
+}
+.forecast-item {
+    margin-bottom: 10px;
+    padding: 10px;
+    border-left: 5px solid #3498db;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# --- 爬取天气数据函数 ---
+@st.cache_data(ttl=3600) # 缓存数据1小时，避免频繁请求
 def scrape_weather_forecast(city_name, city_code):
     url = f"http://www.weather.com.cn/weather/{city_code}.shtml"
     headers = {
@@ -8,42 +53,30 @@ def scrape_weather_forecast(city_name, city_code):
     }
 
     try:
-        # print(f"Debug: 尝试请求URL: {url}") # 可以取消注释进行调试
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status() # 如果请求不成功，抛出HTTPError
-        # print(f"Debug: 请求成功，状态码: {response.status_code}")
-        # print(f"Debug: 响应URL: {response.url}")
-
-        response.encoding = 'utf-8' # 设置正确的编码
+        response.encoding = 'utf-8'
         soup = BeautifulSoup(response.text, 'lxml')
-        # print("Debug: BeautifulSoup解析成功。")
 
-        # 找到包含7天预报的div，其id为'7d'
         week_weather_div = soup.find('div', id='7d')
         if not week_weather_div:
-            # print("Debug: 未找到id为'7d'的div。网站结构可能已变更。")
             return []
-        # print("Debug: 找到id为'7d'的div。")
 
-        # 在此div内部，尝试找到第一个ul元素，不指定class
         ul_element = week_weather_div.find('ul')
         if not ul_element:
-            # print("Debug: 未找到id为'7d'的div内的ul元素。")
             return []
-        # print("Debug: 找到id为'7d'的div内的ul元素。")
 
         forecast_list = []
         day_count = 0
-        # 遍历每个li元素，代表每天的预报
         for day_li in ul_element.find_all('li'):
-            if day_count >= 5: # 我们只需要5天的预报
+            if day_count >= 5:
                 break
 
             date_tag = day_li.find('h1')
             wea_tag = day_li.find('p', class_='wea')
             tem_tag = day_li.find('p', class_='tem')
-            win_tag = day_li.find('p', class_='win') # 查找风力信息
-            aqi_tag = day_li.find('p', class_='aqi') # 查找AQI信息
+            win_tag = day_li.find('p', class_='win')
+            aqi_tag = day_li.find('p', class_='aqi')
 
             date = date_tag.text.strip() if date_tag else 'N/A'
             weather = wea_tag.text.strip() if wea_tag else 'N/A'
@@ -59,41 +92,34 @@ def scrape_weather_forecast(city_name, city_code):
                 'aqi': aqi
             }
 
-            # 根据天气描述判断是否有降水
             if '雨' in weather or '雪' in weather:
                 forecast_item['precipitation'] = '有'
             else:
                 forecast_item['precipitation'] = '无'
 
-            # 湿度、预警等信息在5天预报列表中可能不直接显示，或需要更复杂的爬取逻辑。
-            # 目前设置为占位符，如果需要，后续可以针对性地添加代码来获取。
             forecast_item['humidity'] = 'N/A (需额外爬取)'
             forecast_item['warning'] = 'N/A (需额外爬取)'
 
             forecast_list.append(forecast_item)
             day_count += 1
-
-        # print(f"Debug: 成功解析 {len(forecast_list)} 天预报数据。")
         return forecast_list
 
     except requests.exceptions.RequestException as e:
-        print(f"Error: 网络请求失败: {e}")
+        st.error(f"网络请求失败: {e}")
         return []
     except Exception as e:
-        print(f"Error: 解析网页失败: {e}")
+        st.error(f"解析网页失败: {e}")
         return []
 
+# --- 生成穿衣建议函数 ---
 def get_clothing_advice(temperature_str, weather_desc):
-    # 提取温度值，假设格式为 'XX/YY℃' 或 'XX℃'
     try:
-        # 尝试匹配 'XX/YY℃' 格式，取高低温的平均值
         if '/' in temperature_str:
             temps = temperature_str.replace('℃', '').split('/')
             temp_low = int(temps[1].strip())
             temp_high = int(temps[0].strip())
             avg_temp = (temp_low + temp_high) / 2
         else:
-            # 尝试匹配 'XX℃' 格式，直接取值
             avg_temp = int(temperature_str.replace('℃', '').strip())
     except ValueError:
         return "温度数据解析失败，无法提供穿衣建议。"
@@ -115,48 +141,66 @@ def get_clothing_advice(temperature_str, weather_desc):
 
     return advice
 
-# 定义北京主要城区的城市代码和对应的西游记人物
+# --- 定义北京主要城区及其西游记人物映射 ---
 BEIJING_DISTRICTS = {
-    '东城区': {'code': '101010100', 'character': '唐僧', 'avatar_url': 'https://example.com/tangseng.png'}, # 示例URL，您需要替换为实际图片链接
-    '西城区': {'code': '101010200', 'character': '孙悟空', 'avatar_url': 'https://example.com/wukong.png'},
-    '朝阳区': {'code': '101010300', 'character': '猪八戒', 'avatar_url': 'https://example.com/bajie.png'},
-    '海淀区': {'code': '101010400', 'character': '沙悟净', 'avatar_url': 'https://example.com/wujing.png'},
-    '丰台区': {'code': '101010500', 'character': '白龙马', 'avatar_url': 'https://example.com/bailongma.png'}
+    '东城区': {'code': '101010100', 'character': '唐僧', 'avatar_url': 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/%E6%BB%A3%E5%A4%AA%E5%AD%90.png/250px-%E6%BB%A3%E5%A4%AA%E5%AD%90.png'}, # 示例URL，请替换为实际图片链接
+    '西城区': {'code': '101010200', 'character': '孙悟空', 'avatar_url': 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f6/Monkey_King.png/250px-Monkey_King.png'},
+    '朝阳区': {'code': '101010300', 'character': '猪八戒', 'avatar_url': 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Zhu_Bajie.png/250px-Zhu_Bajie.png'},
+    '海淀区': {'code': '101010400', 'character': '沙悟净', 'avatar_url': 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/1d/Sha_Wujing.png/250px-Sha_Wujing.png'},
+    '丰台区': {'code': '101010500', 'character': '白龙马', 'avatar_url': 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Dragon_Prince_Ao_Lie.png/250px-Dragon_Prince_Ao_Lie.png'}
 }
 
-# 获取北京各个城区的天气预报
+# --- Streamlit 应用主体 ---
+st.markdown("<h1 class='main-header'>北京各城区天气预报与西游穿衣指南</h1>", unsafe_allow_html=True)
+
 all_districts_weather = {}
 
-print("正在尝试从中国天气网爬取北京各个城区的天气数据并生成穿衣建议...")
-for district_name, info in BEIJING_DISTRICTS.items():
-    print(f"\n获取 {district_name} 的天气预报 (人物: {info['character']})...")
-    district_forecast = scrape_weather_forecast(district_name, info['code'])
-    if district_forecast:
-        # print(f"成功获取 {district_name} 的天气数据！") # 可以取消注释进行调试
-        
-        # 为每个预报添加穿衣建议
-        for forecast_item in district_forecast:
-            temperature = forecast_item['temperature']
-            weather = forecast_item['weather']
-            clothing_advice = get_clothing_advice(temperature, weather)
-            forecast_item['clothing_advice'] = clothing_advice
+# 使用 st.spinner 提示用户正在加载数据
+with st.spinner('正在从中国天气网获取北京各城区天气数据并生成穿衣建议...'):
+    for district_name, info in BEIJING_DISTRICTS.items():
+        district_forecast = scrape_weather_forecast(district_name, info['code'])
+        if district_forecast:
+            for forecast_item in district_forecast:
+                temperature = forecast_item['temperature']
+                weather = forecast_item['weather']
+                clothing_advice = get_clothing_advice(temperature, weather)
+                forecast_item['clothing_advice'] = clothing_advice
 
-        all_districts_weather[district_name] = {
-            'character': info['character'],
-            'avatar_url': info['avatar_url'],
-            'forecast': district_forecast
-        }
-        # 打印部分数据以验证
-        print(f"  {district_name} 的穿衣建议:")
-        for item in district_forecast:
-            print(f"    日期: {item['date']}, 天气: {item['weather']}, 温度: {item['temperature']}, 降水: {item['precipitation']}, 穿衣建议: {item['clothing_advice']}")
-    else:
-        print(f"未能获取 {district_name} 的天气数据。")
+            all_districts_weather[district_name] = {
+                'character': info['character'],
+                'avatar_url': info['avatar_url'],
+                'forecast': district_forecast
+            }
+        else:
+            st.warning(f"未能获取 {district_name} 的天气数据。")
 
 if all_districts_weather:
-    print("\n所有北京城区的未来5天天气预报及穿衣建议获取完成。数据已存储在 `all_districts_weather` 变量中。")
-    # 打印最终结果（可选，如果数据量大，可能会很长）
-    # import json
-    # print(json.dumps(all_districts_weather, ensure_ascii=False, indent=2))
+    st.success("天气数据及穿衣建议获取完成！")
+    for district_name, data in all_districts_weather.items():
+        st.markdown(f"<div class='district-card'>", unsafe_allow_html=True)
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if data['avatar_url']:
+                st.image(data['avatar_url'], caption=data['character'], width=100)
+            else:
+                st.write(data['character'])
+        with col2:
+            st.subheader(f"{district_name} ({data['character']})")
+
+            with st.expander(f"查看 {district_name} 未来5天天气预报和穿衣建议"):
+                for item in data['forecast']:
+                    st.markdown(
+                        f"""
+                        <div class='forecast-item'>
+                            📅 **日期**: {item['date']}<br>
+                            ☀️ **天气**: {item['weather']}<br>
+                            🌡️ **温度**: {item['temperature']}<br>
+                            💧 **降水**: {item['precipitation']}<br>
+                            🌬️ **风力**: {item['wind']}<br>
+                            👕 **穿衣建议**: {item['clothing_advice']}
+                        </div>
+                        """, unsafe_allow_html=True
+                    )
+        st.markdown(f"</div>", unsafe_allow_html=True)
 else:
-    print("未能获取任何北京城区的天气数据，请检查网络连接、网站结构或代码。")
+    st.error("未能获取任何北京城区的天气数据，请检查网络连接或网站结构。")
